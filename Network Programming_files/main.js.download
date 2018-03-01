@@ -1,0 +1,270 @@
+// Handle Socket Connections
+// Start Worker Javascript
+
+
+const supernode = "http://52.15.123.74:3000"
+
+function generateChunk(chunkSize) {
+    
+        chunk = new Int8Array(chunkSize);
+    
+        for (var i = 0; i < chunk.length; i++) {
+            chunk[i] = getRandomBinary();
+        }
+        return chunk;
+    }
+
+
+function getRandomBinary() {
+    return Math.round(Math.random()); //The maximum is inclusive and the minimum is inclusive 
+}
+
+function convertStringToArray(string) {
+    return new Int8Array(string.split(','));
+}
+
+// Function to sum array of chunks into one chunk for binarizing without threshold
+function sumChunksPositionwise(chunks) {
+    
+        // Create a temporary chunk with the size of the first chunk
+        bipolarChunk = new Int8Array(chunks[0].length);
+    
+        // Aggregate the resultant sum
+        for (var chunk of chunks) {
+            for (var i = 0; i < chunk.length; i++) {
+                bipolarChunk[i] += chunk[i];
+              }
+        }
+        
+        return bipolarChunk;
+}
+
+function binarizeChunk(chunk) {
+    
+        binaryChunk = new Int8Array(chunk.length);
+        for (var i = 0; i < chunk.length; i++) {
+            if (chunk[i] < 0) {
+                binaryChunk[i] = 0;
+            } else {
+                binaryChunk[i] = 1;
+            }
+          }
+        return binaryChunk;
+}
+
+// Function to handle response from your search request
+function handleSearchResponse(previousChunk, currentChunk) {
+    
+        // Check hamming distance between previous and current
+        var distance = hammingDistance(previousChunk, currentChunk);
+        
+        // End Cases
+        if (distance == 0) {
+            // Emit response as best match found
+            return "converged";
+        } else if (distance == (chunkSize / 2)) {
+            // Emit Error - Chunk not found
+            return "diverged";
+        } else {
+           // Emit broadcast again and wait for responses or recursion for single node
+          return distance;  
+        }
+    
+}
+
+// Function to calculate the hamming distance of two chucks
+function hammingDistance(address, data) {
+    var distance = 0;
+
+    for (var i = 0; i < data.length; i++) {
+        if (address[i] === data[i]) {
+            continue
+        } else {
+            distance += 1;
+        }
+    }
+
+    return distance;
+}
+
+
+// Notification wrapper
+function notificationMessage(title, message) {
+    iziToast.show({
+        title: title,
+        message: message
+    });
+}
+
+
+$(document).ready(function(){
+    
+    var previousChunk; // Chunk for keeping track of iteration
+    var chunkSize;
+    var number_Nodes = 1;
+    var searchResponseBuffer = [];
+
+    socket = io(supernode);
+    let worker = new Worker('js/sdmworker.js');
+    
+    worker.addEventListener('message', function(e) {
+        switch (e.data.cmd) {
+        case "storage_response":
+            // Success message for system stored
+            notificationMessage("Storage", "Stored Chunk successfully");
+            break;
+
+        case "error":
+            // Error occurred during search(Nothing in memory)
+            
+            break;
+            
+        case "search_response":
+            searchResponseBuffer.push(e.data.chunk);
+            break;
+    
+        default:
+            break;
+    }
+    }, false);
+   
+    // socket.emit("defaultConfiguration",name);
+    // socket.emit('storeChunk' ,name);
+    // socket.emit('searchChunk' ,name);
+    // socket.emit("searchResponse",name);
+    
+    
+    socket.on('defaultConfiguration',function(data){
+        $('#addressSize').val(data.addressSize);
+        iziToast.show({
+            title: 'Default Configurations',
+            message: 'What would you like to add?'
+        });
+    });
+    
+    socket.on('total_nodes',function(data){
+
+    });
+
+    socket.on('storageRequest', function(data){
+       var noToGenerate = data.noToGenerate;
+       generatedChunk = convertStringToArray(data.generatedChunk);
+
+       query = {
+        cmd: "storage_request",
+        "noToGenerate": noToGenerate,
+        "generatedChunk": generatedChunk,
+      };
+    
+    worker.postMessage(query);
+       
+    });
+    
+    socket.on('searchRequest',function(data){
+        chunkToSearch = convertStringToArray(data.chunkToSearch);
+ 
+        query = {
+            cmd: "search_request",
+            "chunkToSearch": chunkToSearch,
+          };
+        
+        worker.postMessage(query);
+    });
+
+    socket.on('searchResponse', function(data) {
+       
+        searchResponseBuffer.push(data.chunkToSearch);
+
+        if (searchResponseBuffer.length == number_Nodes) {
+
+            currentChunk = binarizeChunk(sumChunksPositionwise(searchResponseBuffer));
+            handleSearchResponse
+            searchResponseBuffer = [];
+        } 
+
+
+    });
+
+    socket.on('stats',function(data){
+        
+    });
+
+    // worker.postMessage({
+    //     cmd: "search"
+    //   });
+
+    // function to generate a chunk of particular size
+
+    $('#configureButton').click(function() {
+      var maxChunks = $('#maxChunks').val();
+      var addressThreshold = $('#addressThreshold').val();
+      var minStorageThreshold = $('#minStorageThreshold').val();
+      var maxStorageThreshold = $('#maxStorageThreshold').val();
+      chunkSize = $('#addressSize').val();
+
+      var storageThreshold = [minStorageThreshold, maxStorageThreshold];
+      // Send to worker
+      worker.postMessage({
+        cmd: "init",
+        "storageThreshold": storageThreshold,
+        "maxChunks": maxChunks,
+        "maxThreshold": addressThreshold,
+        "chunkSize": chunkSize
+      });
+    
+      notificationMessage('Storage', 'Created memory successfully');
+      
+      return false;
+    });
+
+    $('#generateButton').click(function() {
+        generatedChunk = generateChunk(chunkSize);
+        $('#generatedChunk').val(generatedChunk); 
+        return false;
+      });
+
+      $('#storeButton').click(function() {
+        var noOfIterations = $('#noOfIterations').val();
+        var generatedChunk = $('#generatedChunk').val();
+        query = {
+            cmd: "storage_request",
+            "noToGenerate": noOfIterations,
+            "generatedChunk": generatedChunk,
+          };
+        
+        worker.postMessage(query, [generatedChunk.buffer]);
+        
+        socket.emit('storeChunk', query);
+
+        
+        return false;
+      });
+
+      $('#searchButton').click(function() {
+        var chunkToSearch = convertStringToArray($('#chunkToSearch').val());
+        previousChunk = chunkToSearch;
+        if (chunkSize.length != chunkSize) {
+            return false;
+        }
+
+        query = {
+            cmd: "search_request",
+            "chunkToSearch": chunkToSearch,
+        };
+        
+        worker.postMessage(query, [chunkToSearch.buffer]);
+        
+        socket.emit('searchChunk', query);
+
+        return false;
+      });
+
+    
+    function appendMessage(msg){
+      $('#messages').append($('<li>').text(msg));
+      var message = document.getElementById("message_block");
+      message.scrollTop = message.scrollHeight;
+    }
+  });
+
+

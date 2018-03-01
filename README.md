@@ -1,2 +1,2 @@
 # Sparse-Distributed-Memory
-To design a distributed network system implementing a special kind of storage
+To design a distributed network system implementing a special kind of storage. Architecturally the storage system is a hybrid peer-to-peer network with peer nodes that will perform the actual task of storage and reconstruction of data and the infrustructure nodes implementing helper functions. Also the software architecture should be able to support a potentially large numbers of peers.
